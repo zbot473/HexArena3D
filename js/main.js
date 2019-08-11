@@ -1,4 +1,4 @@
-var scene, camera, renderer, controls, hemilight, dirlight, models = [], OBJArray = []
+var scene, camera, renderer, controls, hemilight, dirlight, models = {}
 
 async function init() {
     //Init three.js
@@ -38,10 +38,9 @@ async function init() {
     dirLight.shadow.bias = -0.0001;
     scene.add(dirLight);
     //Load Models
-    models = ["mountain", "tower"]
 
-    for (const model of models) {
-        OBJArray.push(await loadObj(model))
+    for (const model of ["mountain", "tower", "tree", "house"]) {
+        models[model] = (await loadObj(model))
     }
 }
 
@@ -51,7 +50,6 @@ function loadObj(name) {
 
         mtlLoader.setPath("/textures/");
         mtlLoader.load(name + ".mtl", function (materials) {
-
             materials.preload();
 
             var objLoader = new THREE.OBJLoader();
@@ -67,11 +65,19 @@ function loadObj(name) {
 
 window.tileArray = []
 
+const handler = {
+    set(target, key, value) {
+        target[key] = value;
+        updateTile(target)
+    },
+};
+
+
 function drawHex(sideLength) {
     var startQ = 0
     for (let r = -(sideLength - 1); r < sideLength; r++) {
         for (let q = startQ; q < startQ + (-Math.abs(r) + 2 * sideLength - 1); q++) {
-            tileArray.push({
+            tileArray.push(new Proxy({
                 mesh: new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 0.5, 6), new THREE.MeshStandardMaterial({
                     roughness: 1,
                     flatShading: 1
@@ -87,16 +93,20 @@ function drawHex(sideLength) {
                         z: r
                     },
                     cartesian: {
-                        x: 1.1 * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r),
-                        y: 1.1 * (3 / 2 * r)
+                        x: 1.1 * (3 / 2 * r),
+                        y: 1.1 * (Math.sqrt(3) * q + Math.sqrt(3) / 2 * r)
                     }
                 },
-                contents: "tower",
-                color: "#fff" //(green), 0xFF9FF3 (pink), 0x1DD1A1 (turquoise), 0xFBC531 (yellow), 
-            })
+                contents: "",
+                color: "#fff",
+                army: false,
+                village: 0,
+                forest: 0,
+                treeArray: [],
+                houseArray: []
+            }, handler))
             tileArray[tileArray.length - 1].mesh.position.set(tileArray[tileArray.length - 1].coordinates.cartesian.y,
                 0, tileArray[tileArray.length - 1].coordinates.cartesian.x)
-            tileArray[tileArray.length - 1].mesh.rotation.y = 0.5
             scene.add(tileArray[tileArray.length - 1].mesh)
         }
         if (startQ > -sideLength + 1) {
@@ -105,38 +115,80 @@ function drawHex(sideLength) {
     }
     return
 }
+window.axialSearch = function (q, r) {
+    return tileArray.filter(function (e) {
+        return e.coordinates.axial.q == q && e.coordinates.axial.r == r
+    })[0] || null
+}
 
-function updateTiles() {
-    tileArray.forEach(function (e) {
-        e.mesh.material.color = new THREE.Color(e.color)
+function updateOBJ(tile) {
+    var object = models[tile.contents]
+    if (object === undefined)
+        return
+    scene.remove(tile.contentMesh);
+    tile.contentMesh = object.clone()
+    tile.contentMesh.position.set(tile.coordinates.cartesian.y, 0.251, tile.coordinates.cartesian.x)
+    scene.add(tile.contentMesh)
+}
 
-
-        if (e.contentMesh.children[0].name != e.contents) {
-            var object = OBJArray.filter(function (r) {
-                return r.children[0].name == e.contents
-            })[0]
-            if (object == -1)
-                return
-            scene.remove(e.contentMesh);
-            e.contentMesh = object.clone()
-            e.contentMesh.position.set(e.coordinates.cartesian.y, 0.251, e.coordinates.cartesian.x)
-            scene.add(e.contentMesh)
-        }
-
+function updateTile(tile) {
+    tile.mesh.material.color = new THREE.Color(tile.color)
+    tile.treeArray.forEach(function (e, i) {
+        scene.remove(e)
+        tile.treeArray.slice(i, i + 1)
     })
+    for (let n = 0; n < tile.forest; n++) {
+        tile.treeArray[n] = models.tree.clone()
+        if (tile.forest == 1) {
+            tile.treeArray[n].position.set(tile.coordinates.cartesian.y, 0.25, tile.coordinates.cartesian.x)
+            scene.add(tile.treeArray[n])
+            break
+        }
+        tile.treeArray[n].position.set(0.5 * Math.cos(2 * Math.PI * n / tile.forest) + tile.coordinates.cartesian.y, 0.25, 0.5 * Math.sin(2 * Math.PI * n / tile.forest) + tile.coordinates.cartesian.x)
+        scene.add(tile.treeArray[n])
+    }
+    tile.houseArray.forEach(function (e, i) {
+        scene.remove(e)
+        tile.houseArray.slice(i, i + 1)
+    })
+    for (let n = 0; n < tile.village; n++) {
+        tile.houseArray[n] = models.house.clone()
+        if (tile.village == 1) {
+            tile.houseArray[n].position.set(tile.coordinates.cartesian.y, 0.25, tile.coordinates.cartesian.x)
+            scene.add(tile.houseArray[n])
+            break
+        }
+        tile.houseArray[n].position.set(0.5 * Math.cos(2 * Math.PI * n / tile.village) + tile.coordinates.cartesian.y, 0.25, 0.5 * Math.sin(2 * Math.PI * n / tile.village) + tile.coordinates.cartesian.x)
+        scene.add(tile.houseArray[n])
+    }
+
+    if (tile.contents === "") {
+        scene.remove(tile.contentMesh);
+        return
+    }
+
+    if (tile.contents != "" && tile.contentMesh == undefined) {
+        updateOBJ(tile)
+        return
+    }
+
+    if (tile.contentMesh.children[0].name != tile.contents) {
+        updateOBJ(tile)
+        return
+    }
+
 }
 
 function doOnce() {
-    console.log(OBJArray)
+    console.log(models)
     drawHex(13)
     tileArray.forEach(function (e) {
         e.mesh.material.color = new THREE.Color(e.color)
 
-
-        var object = OBJArray.filter(function (r) {
-            return r.children[0].name == e.contents
-        })[0]
-        if (object == -1)
+        if (e.contents == "")
+            return
+        var object = models[e.contents]
+        if (object === undefined)
             return
         scene.remove(e.contentMesh);
         e.contentMesh = object.clone()
@@ -149,7 +201,6 @@ function doOnce() {
 
 var animate = function () {
     requestAnimationFrame(animate);
-    updateTiles()
     renderer.render(scene, camera);
 
 }
